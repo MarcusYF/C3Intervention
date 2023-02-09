@@ -1,25 +1,9 @@
-import matplotlib.pyplot as plt
-import numpy as np
-from scipy.optimize import linprog
-from scipy.special import softmax
-import scipy
-import numpy as np
-from tqdm import tqdm
-from scipy.optimize import linprog
-from scipy.special import softmax
-import seaborn as sns
-import matplotlib.pyplot as plt
 import torch
-from sklearn import preprocessing
-import copy
-import dgl
-import networkx as nx
-# import tensorflow as tf
-# import tensorflow_probability as tfp
 
 
 def gen_random_directions(n, d):
     return torch.nn.functional.normalize(torch.randn(n, d), dim=1)
+
 
 # scoring function
 def sigma(S, users, tau=0.1, type='linear_'):

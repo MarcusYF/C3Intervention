@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import torch.autograd
 import dgl
 import sys
-import copy
+
 import networkx as nx
 sys.path.append('/u/fy4bc/code/research/C3Intervention')
 from envs_torch import gen_random_directions
