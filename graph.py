@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import torch.autograd
 import dgl
 import sys
+import numpy as np
 
 import networkx as nx
 sys.path.append('/u/fy4bc/code/research/C3Intervention')
@@ -41,6 +42,7 @@ class LightGraph:
         self.ndata['adj'] = adj_mat
         self.G = dgl.from_networkx(self.G, node_attrs=["position"], edge_attrs=["weight"])
         self.G = self.G.to(device)
+        # print(self.G.edata["weight"])
 
     def number_of_users(self):
         return self.n_user
@@ -51,95 +53,202 @@ class LightGraph:
     def number_of_edges(self):
         return self.n * self.s * 2
 
-    def update_state(self, utility_function, lr=0.01, tau=0.1, top_k=None, user_weight=None):
+    def update_state(self, utility_function, lr=0.1, tau=0.1, top_k=None, user_weight=None, return_W=False):
         users = self.G.ndata["position"][0:self.n_user]
         S = self.G.ndata["position"][self.n_user:]
+        # print("-------")
 
         if user_weight is None:
             user_weight = torch.ones(self.n_user)
-        # print("This is data upon retrieval")
-        # print(users, S)
-
         u = utility_function
-        # generate random direction
-        g = gen_random_directions(self.n_player, self.dim).to(device)
-        # find improvement direction
-        utilities_new, _ = u(S + g * lr, users, tau=tau, top_k=top_k, user_weight=user_weight)
         utilities, allocation_matrix = u(S, users, tau=tau, top_k=top_k, user_weight=user_weight)
-        diff = utilities_new - utilities
-        g = torch.sign(diff).unsqueeze(1) * g
+
+        ''' two actions + stay '''
+        g1 = gen_random_directions(self.n_player, self.dim).to(device)
+        g2 = gen_random_directions(self.n_player, self.dim).to(device)
+        # find improvement direction
+        utilities_new1, _ = u(S + g1 * lr, users, tau=tau, top_k=top_k, user_weight=user_weight)
+        utilities_new2, _ = u(S + g2 * lr, users, tau=tau, top_k=top_k, user_weight=user_weight)
+
+        diff1 = utilities_new1 - utilities
+        diff2 = utilities_new2 - utilities
+        g = torch.where(diff1 > diff2, g1.T, g2.T).T
+        diff = torch.where(diff1 > diff2, diff1, diff2)
+        diff = torch.unsqueeze(diff, 1).expand(-1, g.shape[1])
+        g = torch.where(diff > 0, g, torch.zeros(g.shape).to(device))
+
+        ''' one action and its reverse'''
+        # g = gen_random_directions(self.n_player, self.dim).to(device)
+        # # find improvement direction
+        # utilities_new, _ = u(S + g * lr, users, tau=tau, top_k=top_k, user_weight=user_weight)
+        # diff = utilities_new - utilities
+        # g = torch.sign(diff+1e-4).unsqueeze(1) * g
+
+        ''' one action + stay '''
+        # g = gen_random_directions(self.n_player, self.dim).to(device)
+        # # find improvement direction
+        # utilities_new, _ = u(S + g * lr, users, tau=tau, top_k=top_k, user_weight=user_weight)
+        # diff = utilities_new - utilities
+        # diff = torch.unsqueeze(diff, 1).expand(-1, g.shape[1])
+        # g = torch.where(diff > 0, g, torch.zeros(g.shape).to(device))
+
+        utilities_new, _ = u(S + g * lr, users, tau=tau, top_k=top_k, user_weight=user_weight)
         old_S = S.detach()
         S += g * lr
+        # print("Strategy after update")
+        # print(S)
+        # print("Utilities before update")
+        # print(utilities)
+        # print("Utilities after update")
+        # print(utilities_new)
         # Store the updated graph
-        for i in range(self.n_player):
-            self.G.ndata["position"][i + self.n_user] = S[i].detach()
-        return S, old_S
+        if return_W:
+            return S, old_S, sum(utilities_new)
+        else:
+            return S, old_S
 
+    # def update_state_gd(self, utility_function, optimizer, tau=0.1, top_k=None, user_weight=None, return_W=False):
+    #     users = self.G.ndata["position"][0:self.n_user]
+    #     S = self.G.ndata["position"][self.n_user:]
+    #     # print("-------")
 
-# Need a better GNN structure
+    #     if user_weight is None:
+    #         user_weight = torch.ones(self.n_user)
+    #     u = utility_function
+    #     utilities, allocation_matrix = u(S, users, tau=tau, top_k=top_k, user_weight=user_weight)
+
+    #     g = gen_random_directions(self.n_player, self.dim).to(device)
+    #     # find improvement direction
+    #     utilities_new, _ = u(S + g * lr, users, tau=tau, top_k=top_k, user_weight=user_weight)
+    #     diff = utilities_new - utilities
+    #     g = torch.sign(diff+1e-4).unsqueeze(1) * g
+
+    #     utilities_new, _ = u(S + g * lr, users, tau=tau, top_k=top_k, user_weight=user_weight)
+    #     old_S = S.detach()
+    #     # print(g * lr)
+    #     # print("Strategy before update")
+    #     # print(S)
+    #     S += g * lr
+    #     # print("Strategy after update")
+    #     # print(S)
+    #     # print("Utilities before update")
+    #     # print(utilities)
+    #     # print("Utilities after update")
+    #     # print(utilities_new)
+    #     # Store the updated graph
+    #     if return_W:
+    #         return S, old_S, sum(utilities_new)
+    #     else:
+    #         return S, old_S
+
 class GNN(nn.Module):
-    def __init__(self, state_size=100):
+    def __init__(self, hidden_size=10):
         super(GNN, self).__init__()
-        self.l1 = dgl.nn.pytorch.conv.GraphConv(2, 1, weight=True, bias=True)
+        self.l1 = dgl.nn.pytorch.conv.GraphConv(2, hidden_size, weight=True, bias=True)
+        self.l2 = dgl.nn.pytorch.conv.GraphConv(hidden_size, hidden_size, weight=True, bias=True)
+        self.l3 = dgl.nn.pytorch.conv.GraphConv(hidden_size, 1, weight=True, bias=True)
 
     def forward(self, graphs):
         # graphs are 10x2
         # layer is 2x1
         # so result is 10x1, and then take a transpose, making it 1x10
-        h = self.l1(graphs, graphs.ndata["position"].type(torch.FloatTensor).to(device), \
-                    edge_weight=graphs.edata["weight"].reshape(-1, ).type(torch.FloatTensor).to(device))
-        # print(h.shape)
+        edge_weights = graphs.edata["weight"].reshape(-1,).type(torch.FloatTensor).to(device)
+        # print(torch.mean(edge_weights))
+        # print(torch.std(edge_weights))
+        edge_weights = (edge_weights - torch.mean(edge_weights))/torch.std(edge_weights)
+        # print("----- GNN -----")
+        # print(edge_weights)
+        # print(graphs.ndata["position"])
+        h = F.relu(self.l1(graphs, graphs.ndata["position"].type(torch.FloatTensor).to(device), \
+                           edge_weight=edge_weights))
+        # print(torch.mean(h))
+        h = F.relu(self.l2(graphs, h, edge_weight=edge_weights))
+        # print(torch.mean(h))
+        h = self.l3(graphs, h, edge_weight=edge_weights)
+        # print(torch.mean(h))
+
         return h.transpose(0, 1)
 
-
 class DQN(nn.Module):
+    # coordinates -> (2, 10) -> MLP -> (1, 10)
+
+    # (1, 10) number of users + strategies
+    # (1, 6) 6 actions
     def __init__(self, input_size=10, hidden_size=8, action_size=6):
         super(DQN, self).__init__()
         self.fc1 = nn.Linear(input_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, action_size)
-
-        self.fc3 = nn.Linear(input_size, hidden_size)
-        self.fc4 = nn.Linear(hidden_size, action_size)
+        self.fc2 = nn.Linear(hidden_size, hidden_size)
+        self.fc3 = nn.Linear(hidden_size, action_size)
 
     def forward(self, x, action=None):
-        return self.fc2(F.relu(self.fc1(x)))
+        return self.fc3(F.relu(self.fc2(F.relu(self.fc1(x)))))
 
-    def forward_prop(self, x, action=None):
-        return self.fc4(F.relu(self.fc3(x)))
 
+def fanin_init(size, fanin=None):
+    fanin = fanin or size[0]
+    v = 1. / np.sqrt(fanin)
+    return torch.Tensor(size).uniform_(-v, v)
 
 class Critic(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
+    def __init__(self, state_size, action_size, hidden_size, output_size, init_w=3e-3):
         super(Critic, self).__init__()
-        self.linear1 = nn.Linear(input_size, hidden_size)
-        self.linear2 = nn.Linear(hidden_size, hidden_size)
+        self.linear1 = nn.Linear(state_size, hidden_size)
+        self.linear2 = nn.Linear(hidden_size + action_size, hidden_size)
         self.linear3 = nn.Linear(hidden_size, output_size)
+        self.init_weights(init_w)
+
+    def init_weights(self, init_w):
+        self.linear1.weight.data = fanin_init(self.linear1.weight.data.size())
+        self.linear2.weight.data = fanin_init(self.linear2.weight.data.size())
+        self.linear3.weight.data.uniform_(-init_w, init_w)
 
     def forward(self, state, action):
         """
         Params state and actions are torch tensors
         """
-        x = torch.cat([state, action], 1)
-        x = F.relu(self.linear1(x))
-        x = F.relu(self.linear2(x))
-        x = self.linear3(x)
-
-        return x
+        # print("----- Critic -----")
+        out = self.linear1(state)
+        out = F.relu(out)
+        # print(torch.mean(out))
+        out = self.linear2(torch.cat([out, action], 1))
+        out = F.relu(out)
+        # print(torch.mean(out))
+        out = self.linear3(out)
+        # print(torch.mean(torch.abs(out)))
+        return out
 
 
 class Actor(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
+    def __init__(self, input_size, hidden_size, output_size, init_w=3e-3):
         super(Actor, self).__init__()
         self.linear1 = nn.Linear(input_size, hidden_size)
         self.linear2 = nn.Linear(hidden_size, hidden_size)
         self.linear3 = nn.Linear(hidden_size, output_size)
+        self.init_weights(init_w)
+
+    def init_weights(self, init_w):
+        self.linear1.weight.data = fanin_init(self.linear1.weight.data.size())
+        self.linear2.weight.data = fanin_init(self.linear2.weight.data.size())
+        self.linear3.weight.data.uniform_(-init_w, init_w)
 
     def forward(self, state):
         """
         Param state is a torch tensor
         """
+        # print("----- Actor -----")
+        # print(torch.mean(state))
         x = F.relu(self.linear1(state))
+        # print(torch.mean(x))
         x = F.relu(self.linear2(x))
-        x = torch.tanh(self.linear3(x))
+        # print(torch.mean(x))
+        # print(torch.mean(torch.abs(self.linear3(x))))
+        x = torch.tanh(self.linear3(x)) # [-1, 1]
+
+        # a= [1, 1, 1, 1, 1]
+        # b= [noise, noise, noise, noise, noise]
+        # softmax(a+b)
+        # final weights ~ [0.2, 0.2, 0,2, 0.2, 0.2]
+
+        # print(x)
 
         return x

@@ -31,11 +31,11 @@ class OUNoise:
     """
 
     def __init__(
-        self,
-        size: int,
-        mu: float = 0.0,
-        theta: float = 0.15,
-        sigma: float = 0.2,
+            self,
+            size: int,
+            mu: float = 0.0,
+            theta: float = 0.15,
+            sigma: float = 0.2,
     ):
         """Initialize parameters and noise process."""
         self.state = torch.tensor(0.0)
@@ -48,9 +48,10 @@ class OUNoise:
         """Reset the internal state (= noise) to mean (mu)."""
         self.state = copy.copy(self.mu)
 
-    def sample(self):
+    def sample(self, x=None):
         """Update internal state and return it as a noise sample."""
-        x = self.state
+        if x == None:
+            x = self.state
         # dx = self.theta * (self.mu - x) + self.sigma * np.array(
         #     [random.random() for _ in range(len(x))]
         # )
