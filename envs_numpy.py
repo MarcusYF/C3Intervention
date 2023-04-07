@@ -105,6 +105,37 @@ def V(s, users):
 #     welfare = beta * np.sum(np.log(np.exp(scores / beta).sum(axis=0)))
 #     return welfare
 
+def R_diff(s, new_s, beta=0.1):
+    """Reward Function (Stochastic Version)
+    Args:
+        s: (n, m) - the state, represented by a relevance matrix whose (i, j)-th entry denotes the relevance score between the i-th player and the j-th user.
+        new_s: (n, m)  - the newer state
+        beta:     - the temperature in user decision
+    Return:
+        The total user welfare under the allocation rule determined by (K, \tau).
+    """
+    K, tau = 1, 0.1
+    # generate the distribution where the K-list is sampled from
+    dist = tfp.distributions.PlackettLuce( softmax(s / tau, axis=0).T )
+    # sampled indices. size=(m, K)
+    K_list = dist.sample()[:, :K]
+    # sampled scores. size=(K, m)
+    scores = tf.gather_nd(
+        indices=np.stack([K_list.numpy().T, np.vstack([np.array(range(m))] *K) ]).transpose(1,2,0),
+        params = s).numpy()
+    # welfare defined as total user utility
+    old_welfare = beta * np.sum(np.log(np.exp(scores / beta).sum(axis=0)))
+
+    # new welfare
+    dist = tfp.distributions.PlackettLuce( softmax(new_s / tau, axis=0).T )
+    # sampled indices. size=(m, K)
+    K_list = dist.sample()[:, :K]
+    # sampled scores. size=(K, m)
+    scores = tf.gather_nd(
+        indices=np.stack([K_list.numpy().T, np.vstack([np.array(range(m))] *K) ]).transpose(1,2,0),
+        params = new_s).numpy()
+    new_welfare = beta * np.sum(np.log(np.exp(scores / beta).sum(axis=0)))
+    return new_welfare - old_welfare
 
 def R(s, a=None):
     """Reward Function (Deterministic Version)

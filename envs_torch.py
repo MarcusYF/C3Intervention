@@ -1,9 +1,15 @@
 import torch
 
-
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def gen_random_directions(n, d):
-    return torch.nn.functional.normalize(torch.randn(n, d), dim=1)
-
+    # TODO: is the randomization uniform across the sphere?
+    rand_magnitude = torch.unsqueeze(torch.rand(n), 1).expand(-1, 2)
+    rand_direction = torch.nn.functional.normalize(torch.randn(n, d), dim=1)
+    # print("-----")
+    # print(rand_magnitude)
+    # print(rand_direction)
+    # print(rand_magnitude * rand_direction)
+    return rand_magnitude * rand_direction
 
 # scoring function
 def sigma(S, users, tau=0.1, type='linear_'):
@@ -40,20 +46,32 @@ def u(S, users, tau=0.1, top_k=None, user_weight=None):
         vector of size (n, ) with i-th entry u_i(s_i, s_{-i}; users)
     """
     scores = sigma(S, users, tau)
+    # print("-----")
+    # print("Initial scores: ")
+    # print(scores)
     m = users.shape[0]
     n = S.shape[0]
 
     if user_weight is None:
-        user_weight = torch.ones(m)
+        user_weight = torch.ones(m).to(device)
 
     if top_k is None:
         top_k = 1
+    # print(torch.argsort(scores, dim=0))
     ind = torch.argsort(scores, dim=0)[0:n - top_k]
-    scores[ind, torch.arange(m)] -= 1E3
+    # print(ind)
+    scores[ind, torch.arange(m)] -= 1E3 # So the cells except for the top_k are zeroed out
+    # print("Scores after modification: ")
+    # print(scores)
     allocation_matrix = torch.nn.functional.softmax(scores, dim=0)
+    # print("Strategy-User allocation matrix: ")
+    # print(allocation_matrix)
     exp_scores = torch.exp(scores)
     sum_exp_scores = torch.sum(exp_scores, dim=0)
     utilities = torch.sum(allocation_matrix * torch.log(sum_exp_scores) * user_weight, dim=1) / m
+    # print("New utilities")
+    # print(utilities)
+    # print("-----")
     return utilities, allocation_matrix
 
 
